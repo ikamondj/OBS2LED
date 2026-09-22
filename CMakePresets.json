@@ -1,0 +1,22 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "OBS2LED (out of source)",
+      "binaryDir": "${sourceParentDir}/${sourceDirName}-build",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceParentDir}/${sourceDirName}-build/stage",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "configuration": "RelWithDebInfo"
+    }
+  ]
+}

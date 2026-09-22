@@ -1,0 +1,208 @@
+# OBS2LED
+
+A C++20 OBS Studio plugin that sends resized RGB frames to an independent
+receiver over UDP or USB serial. Use **Tools > OBS2LED - Global Output** to follow
+the OBS Preview across scene changes, or add its **video filter** to sources or scenes
+under **Filters > Effect Filters > + > OBS2LED**. Audio is not processed, so the
+filter does not appear in the **Audio/Video Filters** add menu or on audio-only
+sources.
+
+## Source filter
+
+1. Choose **Socket (UDP)** and enter the receiver's numeric IPv4/IPv6 address and
+   port, or choose **USB-C (USB serial)** and select a compatible connected device.
+2. Output starts automatically when the settings are valid and OBS renders the
+   source. Default output is **64x32, nearest neighbor, up to 30 FPS**. Port 9090
+   is only a configurable default; no particular receiver implementation is required.
+3. Change width, height, frame rate, or scaling as needed. Nearest neighbor,
+   bilinear, bicubic, Lanczos, and area sampling are available. Scaling stretches
+   the source to the requested dimensions; it does not crop or letterbox.
+4. Use **Refresh devices / status** after connecting hardware or to see a transport
+   error. Saved devices remain selectable while disconnected and are retried.
+
+Output dimensions range from 1 to 512 per axis. Raw UDP additionally requires
+`width * height * 3 <= 65507`. Both ends must agree on UDP dimensions. The IP field
+starts empty, so adding a filter alone does not send traffic. Hostnames, URLs,
+and scoped IPv6 addresses (`%interface`) are not accepted.
+
+OBS keeps the source's original resolution and color space. The LED output is
+8-bit sRGB, with HDR converted to SDR and transparency rendered against black.
+Capture happens as OBS renders the source; hidden/inactive sources that are not
+being rendered do not generate new frames. Disabling/removing the filter stops
+its output. Filters nearer the source in the chain are included in the captured
+image. Put OBS2LED last in the processing chain to include all desired effects.
+
+## Global preview output
+
+Open **Tools > OBS2LED - Global Output**, configure the destination, and check
+**Enable global LED output**. This window has the same UDP/USB, device selection,
+baud rate, resolution, frame rate, scaling, validation, and refresh controls as
+the filter. Global output is off by default and does not need a filter on any scene.
+Click **OK** to keep your settings and close the window; output continues running.
+Uncheck **Enable global LED output** to stop it and release the USB port.
+
+The global stream follows what the main Preview pane **would** show, even when
+the pane is disabled or minimized. Normally this is the current scene, including
+scene transitions. In Studio Mode it follows the **left Preview pane**, which can
+differ from the live Program pane. It captures the full video canvas, including
+scene filters and empty margins, without editor outlines, handles, or guides.
+
+Destination settings and the Enable checkbox are saved **per scene collection**.
+A new collection starts disabled. Returning to a saved, enabled collection resumes
+its output; changing collections briefly suspends capture while scenes are loaded.
+Existing source filters remain independent. Use one output at a time for a given
+USB device; simultaneous streams to the same UDP receiver can interleave frames.
+
+## USB-C and microcontrollers
+
+USB-C describes the connector. This plugin communicates with **USB CDC serial
+devices and supported USB-to-UART bridges**. Its device menu lists USB-backed
+serial ports, rather than peripherals with unrelated interfaces such as disks,
+keyboards, or cameras. A board must expose a serial interface and run compatible
+receiver firmware. A USB cable alone does not make an arbitrary board a receiver.
+
+| Platform | Discovery and transport |
+| --- | --- |
+| Windows | SetupAPI / Configuration Manager, USB COM ports, overlapped Win32 serial writes |
+| macOS | IOKit USB serial discovery, `/dev/cu.*`, termios and `IOSSIOSPEED` |
+| Linux | sysfs USB ancestry, stable `/dev/serial/by-id` paths when available, termios and poll |
+
+Native USB CDC is recommended. Serial defaults to **2,000,000 baud, 8N1**, with
+DTR asserted and hardware/software flow control disabled. Native CDC firmware
+often treats baud as informational; an actual UART bridge must support the
+selected rate. Opening some boards' serial ports resets them. Close serial
+monitors before selecting a port. On Linux, grant your user access to the device
+through your distribution's serial-device group or udev rules; the plugin does
+not change permissions. Sandboxed OBS installations also need device access.
+
+At 64x32, RGB payload is 6,144 bytes/frame: **184,320 bytes/s at 30 FPS** or
+368,640 bytes/s at 60 FPS. Including the USB header and 8N1 overhead, a UART needs
+about **1.85 Mbaud at 30 FPS**. A 115200-baud UART is limited to roughly 1.9 FPS.
+Slow devices drop intermediate frames rather than accumulating a video backlog.
+
+The [wire protocol](docs/protocol.md) defines both transports. A portable,
+allocation-free USB parser and Arduino-style integration sketch are in
+[examples/usb-receiver](examples/usb-receiver). Connect the sketch's
+`display_frame()` callback to the matrix driver for your board; HUB75 pins,
+DMA, panel scanning, and wiring are hardware-specific. Increase the example's
+receive buffer if you select a resolution larger than 64x32.
+
+The implementation follows the native interfaces documented by
+[Microsoft](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-driver-installation-based-on-compatible-ids),
+[Apple](https://developer.apple.com/documentation/iokit/communicating_with_a_modem_on_a_serial_port),
+and the [Linux kernel](https://docs.kernel.org/usb/acm.html).
+
+## Build
+
+Requirements: CMake 3.28+, a C++20 compiler, and an OBS development SDK providing
+`libobsConfig.cmake`, `obs-frontend-apiConfig.cmake`, headers, libraries, and their
+dependencies. Match the SDK
+architecture to OBS. The regular OBS installer alone does not supply the SDK.
+The Tools menu uses the OBS frontend API and OBS's native properties window;
+no separate Qt development SDK, GStreamer, libusb, or third-party serial library
+is needed.
+See [OBS build instructions](https://github.com/obsproject/obs-studio/wiki/Build-Instructions)
+for preparing the SDK.
+
+From this folder, substitute your SDK paths:
+
+```powershell
+cmake --preset default "-DCMAKE_PREFIX_PATH=C:/SDK/obs;C:/SDK/obs-deps"
+cmake --build --preset default
+ctest --test-dir ../OBS2LED-build -C RelWithDebInfo --output-on-failure
+cmake --install ../OBS2LED-build --config RelWithDebInfo
+```
+
+The default preset uses your platform's CMake generator and puts builds and
+staging in the sibling **`OBS2LED-build`** directory. A build subdirectory inside
+this repository is also supported; only building directly into the source root
+(`cmake -S . -B .`) is rejected. Use a 64-bit toolchain; on Windows add `-A x64` on the first
+configure if necessary. Omit `CMAKE_PREFIX_PATH` if the SDK is already discoverable.
+Machine-specific paths can go in an untracked `CMakeUserPresets.json`.
+
+For an in-repository build (the `build/` directory is ignored by Git):
+
+```powershell
+cmake -S . -B build "-DCMAKE_PREFIX_PATH=C:/SDK/obs;C:/SDK/obs-deps" -DCMAKE_INSTALL_PREFIX=build/stage
+cmake --build build --config RelWithDebInfo
+ctest --test-dir build -C RelWithDebInfo --output-on-failure
+cmake --install build --config RelWithDebInfo
+```
+
+If your SDK is already discoverable, `cmake -S . -B build` is enough to configure.
+SDK paths are cached after the first configure. Other directories, such as
+`../my-obs2led-build`, work too. Pass `-DCMAKE_INSTALL_PREFIX=<staging-directory>`
+to choose the installation root.
+
+## Install
+
+On Windows, close OBS and copy the entire `../OBS2LED-build/stage/obs2led` folder
+(or `build/stage/obs2led` for an in-repository build) into
+`C:\ProgramData\obs-studio\plugins\`. Restart OBS. The staged directory contains:
+
+```text
+obs2led/
+  bin/64bit/obs2led.dll
+  data/locale/en-US.ini
+```
+
+If you install directly into the OBS application directory instead, copy the DLL
+to `obs-plugins/64bit/obs2led.dll` and the contents of this project's `data/`
+directory to `data/obs-plugins/obs2led/`. Use one installation layout to avoid
+duplicate plugin copies. Copying only the DLL leaves the interface labels missing.
+
+If OBS2LED is loaded but you cannot find it, select a video source or scene and
+use the **+** under **Effect Filters**. Older builds with missing locale data
+appear as **Filter.Name**. Check **Help > Log Files > View Current Log** for
+`Failed to load 'en-US' text for module: 'obs2led.dll'`; installing the data folder
+in the matching location and restarting OBS restores the labels. The plugin now
+keeps the **OBS2LED** menu name even when locale data is missing.
+
+On macOS, staging produces `obs2led.plugin`; copy it into
+`~/Library/Application Support/obs-studio/plugins/`. On Linux, installation uses
+the platform's GNU library directory under `lib/obs-plugins` and the data path
+`share/obs/obs-plugins/obs2led` under the selected prefix. Choose a prefix used by
+your OBS installation. See [OBS's plugin guide](https://obsproject.com/kb/plugins-guide).
+
+## Implementation and verification
+
+- `src/video-filter.cpp`: properties, GPU resampling, double-buffered readback,
+  HDR conversion, and shared capture/settings for filters and global output.
+- `src/global-output.cpp`: Tools menu, Preview/scene tracking, scene-collection
+  settings persistence, and shutdown cleanup.
+- `src/output.*`: validation, RGB packing, USB framing, and one background sender
+  per filter instance. Only the newest pending frame is retained. Settings changes
+  discard queued frames from the previous destination. Failed endpoints retry
+  once per second; serial writes support cancellation and a two-second deadline.
+- `src/udp.cpp`, `src/serial-*.cpp`, `src/devices-*.cpp`: native OS transports.
+- `tests/output-tests.cpp`: validation, padded GPU rows, CRC/firmware decoder,
+  UDP loopback, destination changes, invalid settings, and lifecycle checks.
+  Linux additionally checks raw serial bytes/disconnects through a pseudo-terminal.
+
+The transport tests can run without the OBS SDK:
+
+```sh
+cmake -S . -B ../OBS2LED-transport-tests -DOBS2LED_BUILD_PLUGIN=OFF
+cmake --build ../OBS2LED-transport-tests --config RelWithDebInfo
+ctest --test-dir ../OBS2LED-transport-tests -C RelWithDebInfo --output-on-failure
+```
+
+The included GitHub Actions workflow runs these tests on Windows, macOS, and
+Linux when pushed. The Windows GPU integration test is optional:
+
+```powershell
+cmake --preset default -DOBS2LED_BUILD_GPU_TEST=ON
+cmake --build --preset default
+$env:PATH = "C:/Program Files/obs-studio/bin/64bit;" + $env:PATH
+../OBS2LED-build/RelWithDebInfo/obs2led-filter-smoke.exe ../OBS2LED-build/RelWithDebInfo/obs2led.dll ./data "C:/Program Files/obs-studio/data/libobs/" "C:/Program Files/obs-studio/bin/64bit/libobs-d3d11.dll"
+```
+
+It starts a separate libobs instance and verifies filter registration and its
+menu name, real GPU pixel values through UDP, all five scaling modes, output
+cadence, resizing, properties, and stopping or switching transports. The global
+output checks use simulated frontend events with real GPU rendering and UDP:
+scene switching, Studio Preview selection with no preview display, canvas margins,
+saved collection settings, enable/disable, and cleanup. This tests the same
+frontend controller used by the plugin without changing your OBS configuration;
+it does not automate the actual OBS dialog.
+Physical USB throughput and panel output still need verification with your board.

@@ -1,0 +1,19 @@
+name: Transport tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native transports without an OBS SDK
+        run: cmake -S . -B ../obs2led-tests -DOBS2LED_BUILD_PLUGIN=OFF -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build ../obs2led-tests --config RelWithDebInfo
+      - name: Test
+        run: ctest --test-dir ../obs2led-tests -C RelWithDebInfo --output-on-failure

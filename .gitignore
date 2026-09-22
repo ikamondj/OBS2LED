@@ -1,0 +1,11 @@
+/CMakeUserPresets.json
+/.vs/
+/.idea/
+/compile_commands.json
+
+# Local build directories and accidental source-root configure output.
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/build*/
+/out/
