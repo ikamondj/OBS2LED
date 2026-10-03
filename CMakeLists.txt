@@ -13,10 +13,29 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build configuration" FORCE)
 endif()
 
-option(OBS2LED_BUILD_PLUGIN "Build the OBS plugin (requires the OBS SDK)" ON)
+set(OBS2LED_IN_OBS_BUILD OFF)
+if(CMAKE_PROJECT_NAME STREQUAL "obs-studio" AND NOT PROJECT_IS_TOP_LEVEL)
+    set(OBS2LED_IN_OBS_BUILD ON)
+endif()
+
+option(OBS2LED_BUILD_PLUGIN "Build the OBS plugin" ON)
 if(OBS2LED_BUILD_PLUGIN)
-    find_package(libobs CONFIG REQUIRED)
-    find_package(obs-frontend-api CONFIG REQUIRED)
+    if(NOT OBS2LED_IN_OBS_BUILD)
+        include(cmake/FindObsWorktree.cmake)
+        if(NOT TARGET OBS::libobs)
+            find_package(libobs CONFIG REQUIRED)
+        endif()
+        if(NOT TARGET OBS::frontend-api AND NOT TARGET OBS::obs-frontend-api)
+            find_package(obs-frontend-api CONFIG REQUIRED)
+        endif()
+    endif()
+
+    # OBS defines its frontend target after plugins; its alias differs from the SDK export.
+    if(OBS2LED_IN_OBS_BUILD OR TARGET OBS::frontend-api)
+        set(obs2led_frontend_target OBS::frontend-api)
+    else()
+        set(obs2led_frontend_target OBS::obs-frontend-api)
+    endif()
 endif()
 find_package(Threads REQUIRED)
 
@@ -54,7 +73,7 @@ add_library(obs2led MODULE
     src/global-output.cpp
     src/global-output.hpp
 )
-target_link_libraries(obs2led PRIVATE OBS::libobs OBS::obs-frontend-api obs2led-output)
+target_link_libraries(obs2led PRIVATE OBS::libobs ${obs2led_frontend_target} obs2led-output)
 target_compile_features(obs2led PRIVATE cxx_std_20)
 target_compile_definitions(obs2led PRIVATE OBS2LED_VERSION="${PROJECT_VERSION}")
 set_target_properties(obs2led PROPERTIES
@@ -71,7 +90,9 @@ else()
 endif()
 endif()
 
-include(CTest)
+if(PROJECT_IS_TOP_LEVEL)
+    include(CTest)
+endif()
 if(BUILD_TESTING)
     add_executable(obs2led-output-tests tests/output-tests.cpp)
     target_link_libraries(obs2led-output-tests PRIVATE obs2led-output)
@@ -80,7 +101,8 @@ if(BUILD_TESTING)
     option(OBS2LED_BUILD_GPU_TEST "Build the Windows libobs GPU integration test" OFF)
     if(OBS2LED_BUILD_GPU_TEST AND WIN32 AND OBS2LED_BUILD_PLUGIN)
         add_executable(obs2led-filter-smoke tests/filter-smoke.cpp tests/frontend-stub.cpp src/global-output.cpp)
-        target_include_directories(obs2led-filter-smoke PRIVATE src)
+        target_include_directories(obs2led-filter-smoke PRIVATE src
+            "$<TARGET_PROPERTY:${obs2led_frontend_target},INTERFACE_INCLUDE_DIRECTORIES>")
         target_compile_features(obs2led-filter-smoke PRIVATE cxx_std_20)
         target_link_libraries(obs2led-filter-smoke PRIVATE OBS::libobs ws2_32)
     endif()
@@ -91,6 +113,10 @@ if(WIN32)
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
         message(FATAL_ERROR "Build for 64-bit OBS; use an x64 or ARM64 toolchain.")
     endif()
+endif()
+if(OBS2LED_IN_OBS_BUILD)
+    set_target_properties_obs(obs2led PROPERTIES FOLDER "plugins/obs2led" PREFIX "")
+elseif(WIN32)
     install(TARGETS obs2led
         RUNTIME DESTINATION obs2led/bin/64bit
         LIBRARY DESTINATION obs2led/bin/64bit

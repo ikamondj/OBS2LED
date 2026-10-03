@@ -4,10 +4,10 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "OBS2LED (out of source)",
-      "binaryDir": "${sourceParentDir}/${sourceDirName}-build",
+      "displayName": "OBS2LED (OBS worktree)",
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceParentDir}/${sourceDirName}-build/stage",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/build/stage",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true
       }
     }

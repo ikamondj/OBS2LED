@@ -94,50 +94,73 @@ and the [Linux kernel](https://docs.kernel.org/usb/acm.html).
 
 ## Build
 
-Requirements: CMake 3.28+, a C++20 compiler, and an OBS development SDK providing
-`libobsConfig.cmake`, `obs-frontend-apiConfig.cmake`, headers, libraries, and their
-dependencies. Match the SDK
-architecture to OBS. The regular OBS installer alone does not supply the SDK.
+Requirements: CMake 3.28+, a C++20 compiler, and a configured and built OBS Studio
+worktree. Keep this repository at **`obs-studio/plugins/OBS2LED`** and build OBS's
+`libobs` and `obs-frontend-api` targets first, using the same architecture and
+configuration you will use for OBS2LED.
 The Tools menu uses the OBS frontend API and OBS's native properties window;
 no separate Qt development SDK, GStreamer, libusb, or third-party serial library
 is needed.
 See [OBS build instructions](https://github.com/obsproject/obs-studio/wiki/Build-Instructions)
-for preparing the SDK.
+for preparing the worktree and its dependencies.
 
-From this folder, substitute your SDK paths:
+From this folder:
 
 ```powershell
-cmake --preset default "-DCMAKE_PREFIX_PATH=C:/SDK/obs;C:/SDK/obs-deps"
+cmake --preset default
 cmake --build --preset default
-ctest --test-dir ../OBS2LED-build -C RelWithDebInfo --output-on-failure
-cmake --install ../OBS2LED-build --config RelWithDebInfo
-```
-
-The default preset uses your platform's CMake generator and puts builds and
-staging in the sibling **`OBS2LED-build`** directory. A build subdirectory inside
-this repository is also supported; only building directly into the source root
-(`cmake -S . -B .`) is rejected. Use a 64-bit toolchain; on Windows add `-A x64` on the first
-configure if necessary. Omit `CMAKE_PREFIX_PATH` if the SDK is already discoverable.
-Machine-specific paths can go in an untracked `CMakeUserPresets.json`.
-
-For an in-repository build (the `build/` directory is ignored by Git):
-
-```powershell
-cmake -S . -B build "-DCMAKE_PREFIX_PATH=C:/SDK/obs;C:/SDK/obs-deps" -DCMAKE_INSTALL_PREFIX=build/stage
-cmake --build build --config RelWithDebInfo
 ctest --test-dir build -C RelWithDebInfo --output-on-failure
 cmake --install build --config RelWithDebInfo
 ```
 
-If your SDK is already discoverable, `cmake -S . -B build` is enough to configure.
-SDK paths are cached after the first configure. Other directories, such as
-`../my-obs2led-build`, work too. Pass `-DCMAKE_INSTALL_PREFIX=<staging-directory>`
-to choose the installation root.
+The default preset uses your platform's CMake generator and writes to this
+repository's ignored **`build/`** directory, with staging in **`build/stage/`**.
+It looks for OBS's CMake exports in the surrounding worktree's platform build
+directory (`build_x64`, `build_arm64`, `build_macos`, or `build_ubuntu`), then
+`build`. It reuses that build's headers, libraries, dependency prefixes, and
+CMake find modules; no separately installed OBS SDK is needed.
+
+For an OBS build in another directory, select it explicitly:
+
+```powershell
+cmake --preset default -DOBS2LED_OBS_BUILD_DIR=C:/path/to/obs-studio/build
+```
+
+The selected OBS build directory is cached. Use a 64-bit toolchain; on Windows
+add `-A x64` or `-A ARM64` on the first configure as appropriate. Build OBS's
+libraries in `RelWithDebInfo` for the default build preset, or use
+`cmake --build build --config Release` if OBS was built in `Release`.
+Machine-specific settings can go in an untracked `CMakeUserPresets.json`.
+Other plugin build directories also work with `cmake -S . -B <directory>`;
+only building directly into the source root is rejected.
+
+To build OBS2LED as part of OBS itself, add this to OBS's
+`plugins/CMakeLists.txt`:
+
+```cmake
+add_subdirectory(OBS2LED)
+```
+
+Then reconfigure OBS normally and build its `obs2led` target, for example
+`cmake --build ../../build --target obs2led --config RelWithDebInfo` from this
+folder. This mode links directly to OBS's targets and uses OBS's plugin staging
+and installation helpers, including locale data. OBS's parent build controls
+`BUILD_TESTING`; OBS2LED does not enable tests globally when added as a subdirectory.
+
+Standalone SDK builds remain supported when no worktree build is found. To
+explicitly use an installed SDK instead:
+
+```powershell
+cmake --preset default -DOBS2LED_USE_OBS_WORKTREE=OFF "-DCMAKE_PREFIX_PATH=C:/SDK/obs;C:/SDK/obs-deps"
+```
+
+The SDK must provide `libobsConfig.cmake`, `obs-frontend-apiConfig.cmake`,
+headers, libraries, and dependencies. The regular OBS installer does not supply it.
 
 ## Install
 
-On Windows, close OBS and copy the entire `../OBS2LED-build/stage/obs2led` folder
-(or `build/stage/obs2led` for an in-repository build) into
+For the standalone plugin build on Windows, close OBS and copy the entire
+`build/stage/obs2led` folder into
 `C:\ProgramData\obs-studio\plugins\`. Restart OBS. The staged directory contains:
 
 ```text
@@ -182,19 +205,22 @@ your OBS installation. See [OBS's plugin guide](https://obsproject.com/kb/plugin
 The transport tests can run without the OBS SDK:
 
 ```sh
-cmake -S . -B ../OBS2LED-transport-tests -DOBS2LED_BUILD_PLUGIN=OFF
-cmake --build ../OBS2LED-transport-tests --config RelWithDebInfo
-ctest --test-dir ../OBS2LED-transport-tests -C RelWithDebInfo --output-on-failure
+cmake -S . -B build-transport-tests -DOBS2LED_BUILD_PLUGIN=OFF
+cmake --build build-transport-tests --config RelWithDebInfo
+ctest --test-dir build-transport-tests -C RelWithDebInfo --output-on-failure
 ```
 
 The included GitHub Actions workflow runs these tests on Windows, macOS, and
-Linux when pushed. The Windows GPU integration test is optional:
+Linux when pushed. The Windows GPU integration test is optional. Build OBS's
+`libobs-d3d11` target in the same configuration first, and adjust the rundir path
+below if your OBS build directory differs:
 
 ```powershell
 cmake --preset default -DOBS2LED_BUILD_GPU_TEST=ON
 cmake --build --preset default
-$env:PATH = "C:/Program Files/obs-studio/bin/64bit;" + $env:PATH
-../OBS2LED-build/RelWithDebInfo/obs2led-filter-smoke.exe ../OBS2LED-build/RelWithDebInfo/obs2led.dll ./data "C:/Program Files/obs-studio/data/libobs/" "C:/Program Files/obs-studio/bin/64bit/libobs-d3d11.dll"
+$obsRunDir = (Resolve-Path ../../build/rundir/RelWithDebInfo).Path
+$env:PATH = "$obsRunDir/bin/64bit;" + $env:PATH
+./build/RelWithDebInfo/obs2led-filter-smoke.exe ./build/RelWithDebInfo/obs2led.dll ./data "$obsRunDir/data/libobs/" "$obsRunDir/bin/64bit/libobs-d3d11.dll"
 ```
 
 It starts a separate libobs instance and verifies filter registration and its
